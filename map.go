@@ -9,6 +9,8 @@ import (
 	"github.com/rivo/tview"
 )
 
+var MapPin rune = '📍'
+
 type Position struct {
 	X float64
 	Y float64
@@ -445,16 +447,26 @@ func (m *Map) drawLocations(screen tcell.Screen, innerX, innerY, innerW, innerH 
 			label = ""
 		}
 
-		if label != "" {
-			labelStyle := m.LabelStyle.Background(m.Background)
-			for i, r := range label {
-				lx := x + 2 + i
-				if lx >= innerX+innerW {
-					break
-				}
-				screen.SetContent(lx, y, r, nil, labelStyle)
-			}
+		if label == "" {
+			continue
 		}
+
+		labelX := x + 2
+		if labelX >= innerX+innerW || y < innerY || y >= innerY+innerH {
+			continue
+		}
+
+		maxWidth := innerX + innerW - labelX
+		if maxWidth <= 0 {
+			continue
+		}
+
+		fg, _, _ := m.LabelStyle.Decompose()
+		if fg == tcell.ColorDefault {
+			fg = tview.Styles.PrimaryTextColor
+		}
+
+		tview.Print(screen, label, labelX, y, maxWidth, tview.AlignLeft, fg)
 	}
 }
 
@@ -465,10 +477,6 @@ func (m *Map) Draw(screen tcell.Screen) {
 	if w <= 0 || h <= 0 {
 		return
 	}
-	// x++
-	// y++
-	// w -= 2
-	// h -= 2
 
 	bgStyle := tcell.StyleDefault.Background(m.Background)
 	for row := y; row < y+h; row++ {

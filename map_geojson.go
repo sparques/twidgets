@@ -61,7 +61,7 @@ func (m *Map) AddGeoJSON(r io.Reader, opts GeoJSONOptions) error {
 	return nil
 }
 
-// Add Earth loads PathLayers containing geospatial data for countries, us-states, and us-counties.
+// LoadEarth loads PathLayers containing geospatial data for countries, us-states, and us-counties.
 func (m *Map) LoadEarth() *Map {
 
 	continentsPaths, _ := LoadGeoJSONPaths(bytes.NewBuffer(continentsGeojson), DefaultGeoJSONOptions())
@@ -86,7 +86,7 @@ func (m *Map) LoadEarth() *Map {
 
 	usCounties := NewPathLayer("counties", usCountiesPaths).
 		WithPriority(1).
-		WithScaleRange(7, 100).
+		WithScaleRange(7, 1000).
 		SetStyle(tcell.StyleDefault.Foreground(tcell.Color234))
 
 	m.AddPathProvider(continents)
