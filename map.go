@@ -527,9 +527,9 @@ func (m *Map) InputHandler() func(event *tcell.EventKey, setFocus func(p tview.P
 		case tcell.KeyDown:
 			m.Pan(0, m.Zoom*m.CellRatio*2)
 		case tcell.KeyLeft:
-			m.Pan(m.Zoom*2, 0)
-		case tcell.KeyRight:
 			m.Pan(-m.Zoom*2, 0)
+		case tcell.KeyRight:
+			m.Pan(m.Zoom*2, 0)
 		case tcell.KeyRune:
 			switch event.Rune() {
 			case '+', '=':
