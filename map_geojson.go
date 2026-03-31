@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -302,4 +303,25 @@ func coordToPosition(c []float64) (Position, error) {
 
 func positionsEqual(a, b Position) bool {
 	return a.X == b.X && a.Y == b.Y
+}
+
+const earthRadiusKm = 6371.0
+
+func LatLonDistance(a, b Position) (kilometers float64) {
+	// Convert degrees to radians
+	lat1 := a.Y * math.Pi / 180
+	lon1 := a.X * math.Pi / 180
+	lat2 := b.Y * math.Pi / 180
+	lon2 := b.X * math.Pi / 180
+
+	dlat := lat2 - lat1
+	dlon := lon2 - lon1
+
+	sinDLat := math.Sin(dlat / 2)
+	sinDLon := math.Sin(dlon / 2)
+
+	h := sinDLat*sinDLat +
+		math.Cos(lat1)*math.Cos(lat2)*sinDLon*sinDLon
+
+	return 2 * earthRadiusKm * math.Asin(math.Sqrt(h))
 }
