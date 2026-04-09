@@ -1,6 +1,7 @@
 package twidgets
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"sort"
@@ -22,6 +23,28 @@ type Location struct {
 	ShortName string
 	LongName  string
 	Style     tcell.Style
+}
+
+type renderedLocation struct {
+	Loc      *Location
+	PinX     int
+	PinY     int
+	Label    string
+	Icon     rune
+	Style    tcell.Style
+	RectMinX int
+	RectMinY int
+	RectMaxX int // exclusive
+	RectMaxY int // exclusive
+}
+
+type locationCluster struct {
+	Items []*renderedLocation
+
+	MinX int
+	MinY int
+	MaxX int // exclusive
+	MaxY int // exclusive
 }
 
 type Path struct {
@@ -491,7 +514,8 @@ func (m *Map) Draw(screen tcell.Screen) {
 	}
 
 	m.drawPaths(screen, x, y, w, h)
-	m.drawLocations(screen, x, y, w, h)
+	//m.drawLocations(screen, x, y, w, h)
+	m.drawLocationClusters(screen, x, y, w, h)
 }
 
 func (m *Map) Focus(delegate func(p tview.Primitive)) {
@@ -660,9 +684,7 @@ func (m *Map) visiblePaths() []*Path {
 
 	var batches []provided
 
-	x, y, w, h := m.GetInnerRect()
-	_ = x
-	_ = y
+	_, _, w, h := m.GetInnerRect()
 
 	for i, provider := range m.PathLayers {
 		if provider == nil {
@@ -705,6 +727,166 @@ func (m *Map) visiblePaths() []*Path {
 	return out
 }
 
+func (m *Map) renderedLocations(innerX, innerY, innerW, innerH int) []*renderedLocation {
+	var out []*renderedLocation
+
+	for _, loc := range m.Locations {
+		if loc == nil {
+			continue
+		}
+
+		x, y, ok := m.worldToCell(loc.Position.X, loc.Position.Y, innerX, innerY, innerW, innerH)
+		if !ok {
+			continue
+		}
+
+		style := loc.Style
+		if style == tcell.StyleDefault {
+			style = m.LocationStyle
+		}
+		style = style.Background(m.Background)
+
+		icon, label := m.locationMarkerAndLabel(loc)
+
+		// Pin occupies one cell.
+		minX, minY := x, y
+		maxX, maxY := x+1, y+1
+
+		// Natural label location: to the right of the pin, same row.
+		if label != "" {
+			labelX := x + 2
+			labelW := tview.TaggedStringWidth(label)
+			if labelW > 0 {
+				if labelX < minX {
+					minX = labelX
+				}
+				if y < minY {
+					minY = y
+				}
+				if labelX+labelW > maxX {
+					maxX = labelX + labelW
+				}
+				if y+1 > maxY {
+					maxY = y + 1
+				}
+			}
+		}
+
+		out = append(out, &renderedLocation{
+			Loc:      loc,
+			PinX:     x,
+			PinY:     y,
+			Label:    label,
+			Icon:     icon,
+			Style:    style,
+			RectMinX: minX,
+			RectMinY: minY,
+			RectMaxX: maxX,
+			RectMaxY: maxY,
+		})
+	}
+
+	return out
+}
+
+func (m *Map) drawLocationClusters(screen tcell.Screen, innerX, innerY, innerW, innerH int) {
+	items := m.renderedLocations(innerX, innerY, innerW, innerH)
+	if len(items) == 0 {
+		return
+	}
+
+	clusters := clusterRenderedLocations(items)
+
+	for _, c := range clusters {
+		if c == nil || len(c.Items) == 0 {
+			continue
+		}
+		sortClusterItems(c)
+
+		anchor := c.Items[0]
+		pinX, pinY := anchor.PinX, anchor.PinY
+		if pinX < innerX || pinX >= innerX+innerW || pinY < innerY || pinY >= innerY+innerH {
+			continue
+		}
+
+		// Draw representative pin.
+		screen.SetContent(pinX, pinY, anchor.Icon, nil, anchor.Style)
+
+		labelX := pinX + 2
+		if labelX >= innerX+innerW {
+			continue
+		}
+		maxWidth := innerX + innerW - labelX
+		if maxWidth <= 0 {
+			continue
+		}
+
+		// Draw up to 2 labels.
+		linesDrawn := 0
+		max := 3
+		if len(c.Items) > 3 {
+			max = 2
+		}
+		for i := 0; i < len(c.Items) && i < max; i++ {
+			y := pinY + i
+			if y < innerY || y >= innerY+innerH {
+				continue
+			}
+			label := c.Items[i].Label
+			if label == "" {
+				continue
+			}
+
+			fg, _, _ := c.Items[i].Style.Decompose()
+			if fg == tcell.ColorDefault {
+				fg = tview.Styles.PrimaryTextColor
+			}
+			tview.Print(screen, label, labelX, y, maxWidth, tview.AlignLeft, fg)
+			linesDrawn++
+		}
+
+		remaining := len(c.Items) - linesDrawn
+		if remaining > 1 {
+			y := pinY + linesDrawn
+			if y >= innerY && y < innerY+innerH {
+				more := fmt.Sprintf("+%d", remaining)
+				tview.Print(screen, more, labelX, y, maxWidth, tview.AlignLeft, tview.Styles.SecondaryTextColor)
+			}
+		}
+	}
+}
+
+func sortClusterItems(c *locationCluster) {
+	sort.SliceStable(c.Items, func(i, j int) bool {
+		if c.Items[i].PinY != c.Items[j].PinY {
+			return c.Items[i].PinY < c.Items[j].PinY
+		}
+		return c.Items[i].PinX < c.Items[j].PinX
+	})
+}
+
+func (m *Map) locationMarkerAndLabel(loc *Location) (rune, string) {
+	var label string
+	switch m.LabelMode {
+	case LabelShort:
+		label = loc.ShortName
+	case LabelLong:
+		label = loc.LongName
+	default:
+		label = ""
+	}
+
+	icon := loc.Icon
+	if icon == 0 {
+		icon = '•'
+	}
+	if !m.ShowIcon {
+		icon = ' '
+	}
+
+	return icon, label
+}
+
 func (m *Map) AddPathProvider(p PathProvider) *Map {
 	if p != nil {
 		m.PathLayers = append(m.PathLayers, p)
@@ -732,6 +914,99 @@ func (m *Map) LoadGeoJSONPathLayer(filename string, layer *PathLayer, opts GeoJS
 
 	m.AddPathLayer(layer)
 	return nil
+}
+
+func rectsOverlapInt(aMinX, aMinY, aMaxX, aMaxY, bMinX, bMinY, bMaxX, bMaxY int) bool {
+	return aMinX < bMaxX && aMaxX > bMinX && aMinY < bMaxY && aMaxY > bMinY
+}
+
+func clusterOverlaps(c *locationCluster, rl *renderedLocation) bool {
+	return rectsOverlapInt(
+		c.MinX, c.MinY, c.MaxX, c.MaxY,
+		rl.RectMinX, rl.RectMinY, rl.RectMaxX, rl.RectMaxY,
+	)
+}
+
+func clusterRenderedLocations(items []*renderedLocation) []*locationCluster {
+	var clusters []*locationCluster
+
+	for _, item := range items {
+		var hits []int
+
+		for i, c := range clusters {
+			if clusterOverlaps(c, item) {
+				hits = append(hits, i)
+			}
+		}
+
+		switch len(hits) {
+		case 0:
+			clusters = append(clusters, &locationCluster{
+				Items: []*renderedLocation{item},
+				MinX:  item.RectMinX,
+				MinY:  item.RectMinY,
+				MaxX:  item.RectMaxX,
+				MaxY:  item.RectMaxY,
+			})
+
+		case 1:
+			c := clusters[hits[0]]
+			c.Items = append(c.Items, item)
+			if item.RectMinX < c.MinX {
+				c.MinX = item.RectMinX
+			}
+			if item.RectMinY < c.MinY {
+				c.MinY = item.RectMinY
+			}
+			if item.RectMaxX > c.MaxX {
+				c.MaxX = item.RectMaxX
+			}
+			if item.RectMaxY > c.MaxY {
+				c.MaxY = item.RectMaxY
+			}
+
+		default:
+			// Merge all hit clusters plus this item into the first hit cluster.
+			base := clusters[hits[0]]
+			base.Items = append(base.Items, item)
+			if item.RectMinX < base.MinX {
+				base.MinX = item.RectMinX
+			}
+			if item.RectMinY < base.MinY {
+				base.MinY = item.RectMinY
+			}
+			if item.RectMaxX > base.MaxX {
+				base.MaxX = item.RectMaxX
+			}
+			if item.RectMaxY > base.MaxY {
+				base.MaxY = item.RectMaxY
+			}
+
+			// Merge remaining hit clusters into base, remove them from slice back-to-front.
+			for j := len(hits) - 1; j >= 1; j-- {
+				idx := hits[j]
+				other := clusters[idx]
+
+				base.Items = append(base.Items, other.Items...)
+				if other.MinX < base.MinX {
+					base.MinX = other.MinX
+				}
+				if other.MinY < base.MinY {
+					base.MinY = other.MinY
+				}
+				if other.MaxX > base.MaxX {
+					base.MaxX = other.MaxX
+				}
+				if other.MaxY > base.MaxY {
+					base.MaxY = other.MaxY
+				}
+
+				clusters = append(clusters[:idx], clusters[idx+1:]...)
+			}
+		}
+	}
+
+	return clusters
 }
 
 func LoadGeoJSONPathsFile(filename string, opts GeoJSONOptions) ([]*Path, error) {
