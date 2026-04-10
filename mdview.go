@@ -35,14 +35,15 @@ type MarkdownView struct {
 	follow  bool // when true, keep bottom in view after SetMarkdown
 
 	// Base style + palette knobs.
-	baseStyle      tcell.Style
-	headingStyle   tcell.Style
-	emphStyle      tcell.Style
-	strongStyle    tcell.Style
-	codeStyle      tcell.Style
-	codeBlockStyle tcell.Style
-	quoteStyle     tcell.Style
-	linkStyle      tcell.Style
+	baseStyle        tcell.Style
+	headerStyle      tcell.Style
+	headerLevelStyle [6]*tcell.Style
+	emphStyle        tcell.Style
+	strongStyle      tcell.Style
+	codeStyle        tcell.Style
+	codeBlockStyle   tcell.Style
+	quoteStyle       tcell.Style
+	linkStyle        tcell.Style
 }
 
 func NewMarkdownView() *MarkdownView {
@@ -50,7 +51,7 @@ func NewMarkdownView() *MarkdownView {
 		Box: tview.NewBox(),
 
 		baseStyle:      tcell.StyleDefault,
-		headingStyle:   tcell.StyleDefault.Bold(true).Underline(true),
+		headerStyle:    tcell.StyleDefault.Bold(true).Underline(true),
 		emphStyle:      tcell.StyleDefault.Italic(true),
 		strongStyle:    tcell.StyleDefault.Bold(true),
 		codeStyle:      tcell.StyleDefault.Reverse(true),
@@ -67,7 +68,7 @@ func (v *MarkdownView) SetBaseStyle(s tcell.Style) *MarkdownView {
 	v.mu.Lock()
 	v.baseStyle = s
 
-	v.headingStyle = v.baseStyle.Bold(true).Underline(true)
+	v.headerStyle = v.baseStyle.Bold(true).Underline(true)
 	v.emphStyle = v.baseStyle.Italic(true)
 	v.strongStyle = v.baseStyle.Bold(true)
 	v.codeStyle = v.baseStyle.Reverse(true)
@@ -78,12 +79,44 @@ func (v *MarkdownView) SetBaseStyle(s tcell.Style) *MarkdownView {
 	v.mu.Unlock()
 	return v
 }
-func (v *MarkdownView) SetHeadingStyle(s tcell.Style) *MarkdownView {
+
+func (v *MarkdownView) SetHeaderStyle(s tcell.Style) *MarkdownView {
 	v.mu.Lock()
-	v.headingStyle = s
+	v.headerStyle = s
 	v.mu.Unlock()
 	return v
 }
+
+func (v *MarkdownView) SetHeaderLevelStyle(level int, s tcell.Style) *MarkdownView {
+	if level < 1 || level > 6 {
+		return v
+	}
+	v.mu.Lock()
+	styleCopy := s
+	v.headerLevelStyle[level-1] = &styleCopy
+	v.mu.Unlock()
+	return v
+}
+
+func (v *MarkdownView) ClearHeaderLevelStyle(level int) *MarkdownView {
+	if level < 1 || level > 6 {
+		return v
+	}
+	v.mu.Lock()
+	v.headerLevelStyle[level-1] = nil
+	v.mu.Unlock()
+	return v
+}
+
+func (v *MarkdownView) headerStyleFor(level int) tcell.Style {
+	if level >= 1 && level <= 6 {
+		if s := v.headerLevelStyle[level-1]; s != nil {
+			return *s
+		}
+	}
+	return v.headerStyle
+}
+
 func (v *MarkdownView) SetEmphStyle(s tcell.Style) *MarkdownView {
 	v.mu.Lock()
 	v.emphStyle = s
@@ -277,12 +310,9 @@ func parseAndBuildLines(md string, v *MarkdownView) []Line {
 			if !entering {
 				b.blankLine(1)
 			}
-
 		case *ast.Heading:
 			if entering {
-				// Slightly different per level if you want:
-				// we’ll just use headingStyle and prepend ## feel.
-				b.pushStyle(v.headingStyle)
+				b.pushStyle(v.headerStyleFor(n.Level))
 			} else {
 				b.popStyle()
 				b.blankLine(1)

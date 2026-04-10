@@ -101,7 +101,7 @@ func (rl *renderedLocation) Rectangle(labelType LabelMode) image.Rectangle {
 
 	// corner case bug: we're not tracking how long of string "+x" is
 
-	// width+1 to include the pin/icon
+	// width+2 to include the pin/icon
 	return image.Rect(0, 0, width+2, min(3, len(rl.Locations))).Add(rl.Anchor)
 }
 
