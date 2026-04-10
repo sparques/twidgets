@@ -69,7 +69,7 @@ func (rl *renderedLocation) Rectangle(labelType LabelMode) image.Rectangle {
 
 	if labelType == LabelNone {
 		if len(rl.Locations) > 1 {
-			label := fmt.Sprintf("+%d", len(rl.Locations)-1)
+			label := fmt.Sprintf("=%d", len(rl.Locations))
 			return image.Rect(0, 0, 1+len(label), 1)
 		}
 		return image.Rect(0, 0, 1, 1).Add(rl.Anchor)
