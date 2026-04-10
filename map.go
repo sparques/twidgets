@@ -1,8 +1,11 @@
 package twidgets
 
 import (
+	"fmt"
+	"image"
 	"math"
 	"os"
+	"slices"
 	"sort"
 
 	"github.com/gdamore/tcell/v2"
@@ -14,6 +17,92 @@ var MapPin rune = '📍'
 type Position struct {
 	X float64
 	Y float64
+}
+
+type renderedLocation struct {
+	Locations []*Location
+	Anchor    image.Point
+}
+
+func nearestCenterSortFunc(center Position) func(a, b *Location) int {
+	dist := func(a, b Position) float64 {
+		return math.Pow(a.X-b.X, 2) + math.Pow(a.Y-b.Y, 2)
+	}
+	return func(a, b *Location) int {
+		switch {
+		case dist(a.Position, center) < dist(b.Position, center):
+			return -1
+		case dist(a.Position, center) > dist(b.Position, center):
+			return 1
+		default:
+			return 0
+		}
+	}
+}
+
+func (l *renderedLocation) center() Position {
+	var center Position
+	for i := range l.Locations {
+		center.X += l.Locations[i].Position.X
+		center.Y += l.Locations[i].Position.Y
+	}
+
+	center.X /= float64(len(l.Locations))
+	center.Y /= float64(len(l.Locations))
+
+	return center
+}
+
+func (l *Location) GetLabel(labelType LabelMode) string {
+	switch labelType {
+	case LabelShort:
+		return l.ShortName
+	case LabelLong:
+		return l.LongName
+	default:
+		return ""
+	}
+}
+
+func (rl *renderedLocation) Rectangle(labelType LabelMode) image.Rectangle {
+	slices.SortStableFunc(rl.Locations, nearestCenterSortFunc(rl.center()))
+
+	if labelType == LabelNone {
+		if len(rl.Locations) > 1 {
+			label := fmt.Sprintf("+%d", len(rl.Locations)-1)
+			return image.Rect(0, 0, 1+len(label), 1)
+		}
+		return image.Rect(0, 0, 1, 1).Add(rl.Anchor)
+	}
+
+	var width int
+
+	switch {
+	case len(rl.Locations) == 3:
+		width = tview.TaggedStringWidth(rl.Locations[2].GetLabel(labelType))
+		fallthrough
+	case len(rl.Locations) == 2:
+		w := tview.TaggedStringWidth(rl.Locations[1].GetLabel(labelType))
+		if w > width {
+			width = w
+		}
+		fallthrough
+	case len(rl.Locations) == 1:
+		w := tview.TaggedStringWidth(rl.Locations[0].GetLabel(labelType))
+		if w > width {
+			width = w
+		}
+	default:
+		width = max(
+			tview.TaggedStringWidth(rl.Locations[0].GetLabel(labelType)),
+			tview.TaggedStringWidth(rl.Locations[1].GetLabel(labelType)),
+		)
+	}
+
+	// corner case bug: we're not tracking how long of string "+x" is
+
+	// width+1 to include the pin/icon
+	return image.Rect(0, 0, width+2, min(3, len(rl.Locations))).Add(rl.Anchor)
 }
 
 type Location struct {
@@ -108,8 +197,9 @@ type Map struct {
 	// A good default for terminal cells is often 0.5.
 	CellRatio float64
 
-	Locations []*Location
-	Paths     []*Path
+	Locations         []*Location
+	Paths             []*Path
+	renderedLocations []*renderedLocation
 
 	PathLayers []PathProvider
 
@@ -470,6 +560,143 @@ func (m *Map) drawLocations(screen tcell.Screen, innerX, innerY, innerW, innerH 
 	}
 }
 
+func (m *Map) drawRenderedLocations(screen tcell.Screen, innerX, innerY, innerW, innerH int) {
+	drawIcon := func(loc *Location, x, y int) {
+		style := loc.Style
+		if style == tcell.StyleDefault {
+			style = m.LocationStyle
+		}
+		style = style.Background(m.Background)
+
+		ch := loc.Icon
+		if ch == 0 {
+			ch = '●'
+		}
+		if !m.ShowIcon {
+			ch = ' '
+		}
+		screen.SetContent(x, y, ch, nil, style)
+	}
+
+	fg, _, _ := m.LabelStyle.Decompose()
+	if fg == tcell.ColorDefault {
+		fg = tview.Styles.PrimaryTextColor
+	}
+
+	for _, rloc := range m.renderedLocations {
+		if rloc == nil {
+			continue
+		}
+
+		x := rloc.Anchor.X
+
+		// no labels, just show the first Icon and how many locations it represents
+
+		if m.LabelMode == LabelNone {
+			drawIcon(rloc.Locations[0], x, rloc.Anchor.Y)
+			if len(rloc.Locations) > 1 {
+				tview.Print(screen, fmt.Sprintf("+%d", len(rloc.Locations)), x+2, rloc.Anchor.Y, innerX+innerW-(x+2), tview.AlignLeft, fg)
+
+			}
+			continue
+		}
+
+		for i, loc := range rloc.Locations {
+			if i >= 3 {
+				break
+			}
+			y := rloc.Anchor.Y + i
+			if loc == nil {
+				continue
+			}
+
+			if i == 0 {
+				drawIcon(loc, x, y)
+			}
+
+			var label string
+			switch m.LabelMode {
+			case LabelShort:
+				label = loc.ShortName
+			case LabelLong:
+				label = loc.LongName
+			default:
+				label = ""
+			}
+
+			if i == 2 && len(rloc.Locations) > 3 {
+				// we're on the third line and we have more locations
+				// so isntead of the third location, we'll show a count
+				label = fmt.Sprintf("+%d", len(rloc.Locations)-2)
+			}
+
+			if label == "" {
+				continue
+			}
+
+			labelX := x + 2
+			if labelX >= innerX+innerW || y < innerY || y >= innerY+innerH {
+				continue
+			}
+
+			maxWidth := innerX + innerW - labelX
+			if maxWidth <= 0 {
+				continue
+			}
+
+			tview.Print(screen, label, labelX, y, maxWidth, tview.AlignLeft, fg)
+		}
+	}
+}
+
+func (m *Map) placeLocations(innerX, innerY, innerW, innerH int) {
+	merge := func(a, b *renderedLocation) {
+		a.Locations = append(a.Locations, b.Locations...)
+		wpos := a.center()
+		x, y, _ := m.worldToCell(wpos.X, wpos.Y, innerX, innerY, innerW, innerH)
+		a.Anchor = image.Point{x, y}
+	}
+
+	if cap(m.renderedLocations) < len(m.Locations) {
+		m.renderedLocations = make([]*renderedLocation, 0, len(m.Locations))
+	} else {
+		m.renderedLocations = m.renderedLocations[0:0]
+	}
+
+	// take all Locations and do initial palcement
+
+	for i := range m.Locations {
+		x, y, ok := m.worldToCell(m.Locations[i].Position.X, m.Locations[i].Position.Y, innerX, innerY, innerW, innerH)
+		if !ok {
+			continue
+		}
+
+		m.renderedLocations = append(m.renderedLocations,
+			&renderedLocation{
+				Locations: []*Location{m.Locations[i]},
+				Anchor:    image.Point{x, y},
+			})
+	}
+
+	// loop over renderedLocations until nothing changes
+restart:
+	for i, base := range m.renderedLocations {
+		baseRect := base.Rectangle(m.LabelMode)
+		for j, neighbor := range m.renderedLocations {
+			if i == j {
+				continue
+			}
+			neighRect := neighbor.Rectangle(m.LabelMode)
+
+			if baseRect.Overlaps(neighRect) {
+				merge(base, neighbor)
+				m.renderedLocations = slices.Delete(m.renderedLocations, j, j+1)
+				goto restart
+			}
+		}
+	}
+}
+
 func (m *Map) Draw(screen tcell.Screen) {
 	m.Box.DrawForSubclass(screen, m)
 
@@ -490,8 +717,11 @@ func (m *Map) Draw(screen tcell.Screen) {
 		}
 	}
 
+	m.placeLocations(x, y, w, h)
+
 	m.drawPaths(screen, x, y, w, h)
-	m.drawLocations(screen, x, y, w, h)
+	// m.drawLocations(screen, x, y, w, h)
+	m.drawRenderedLocations(screen, x, y, w, h)
 }
 
 func (m *Map) Focus(delegate func(p tview.Primitive)) {
