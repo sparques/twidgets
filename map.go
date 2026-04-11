@@ -70,7 +70,7 @@ func (rl *renderedLocation) Rectangle(labelType LabelMode) image.Rectangle {
 	if labelType == LabelNone {
 		if len(rl.Locations) > 1 {
 			label := fmt.Sprintf("=%d", len(rl.Locations))
-			return image.Rect(0, 0, 1+len(label), 1)
+			return image.Rect(0, 0, 1+len(label), 1).Add(rl.Anchor)
 		}
 		return image.Rect(0, 0, 1, 1).Add(rl.Anchor)
 	}
@@ -591,12 +591,10 @@ func (m *Map) drawRenderedLocations(screen tcell.Screen, innerX, innerY, innerW,
 		x := rloc.Anchor.X
 
 		// no labels, just show the first Icon and how many locations it represents
-
 		if m.LabelMode == LabelNone {
 			drawIcon(rloc.Locations[0], x, rloc.Anchor.Y)
 			if len(rloc.Locations) > 1 {
-				tview.Print(screen, fmt.Sprintf("+%d", len(rloc.Locations)), x+2, rloc.Anchor.Y, innerX+innerW-(x+2), tview.AlignLeft, fg)
-
+				tview.Print(screen, fmt.Sprintf("=%d", len(rloc.Locations)), x+1, rloc.Anchor.Y, innerX+innerW-(x+1), tview.AlignLeft, fg)
 			}
 			continue
 		}
@@ -626,7 +624,7 @@ func (m *Map) drawRenderedLocations(screen tcell.Screen, innerX, innerY, innerW,
 
 			if i == 2 && len(rloc.Locations) > 3 {
 				// we're on the third line and we have more locations
-				// so isntead of the third location, we'll show a count
+				// so instead of the third location, we'll show a count
 				label = fmt.Sprintf("+%d", len(rloc.Locations)-2)
 			}
 
